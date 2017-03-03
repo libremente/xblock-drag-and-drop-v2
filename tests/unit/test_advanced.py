@@ -166,16 +166,16 @@ class StandardModeFixture(BaseDragAndDropAjaxFixture):
         # 1 item that belongs to ZONE_1, 1 item that belongs to ZONE_2, and two decoy items.
         # After we drop the first item into ZONE_1, 3 out of 4 items are already in correct positions
         # (1st item in ZONE_1 and two decoy items left in the bank). The grade at this point is therefore 3/4 * weight.
-        self.assertEqual(0.75 * weight, self.block.grade)
-        self.assertEqual({'value': 0.75 * weight, 'max_value': weight}, published_grades[-1])
+        self.assertEqual(0.75, self.block.grade)
+        self.assertEqual({'value': 0.75, 'max_value': 1, 'only_if_higher': None}, published_grades[-1])
 
         # Drag the second item into correct zone.
         self.call_handler(self.DROP_ITEM_HANDLER, {"val": 1, "zone": self.ZONE_2})
 
         self.assertEqual(2, len(published_grades))
         # All items are now placed in the right place, the user therefore gets the full grade.
-        self.assertEqual(weight, self.block.grade)
-        self.assertEqual({'value': weight, 'max_value': weight}, published_grades[-1])
+        self.assertEqual(1, self.block.grade)
+        self.assertEqual({'value': 1, 'max_value': 1, 'only_if_higher': None}, published_grades[-1])
 
     def test_drop_item_final(self):
         data = {"val": 0, "zone": self.ZONE_1}
@@ -349,11 +349,12 @@ class AssessmentModeFixture(BaseDragAndDropAjaxFixture):
 
             self.assertTrue(self.block.completed)
             patched_publish.assert_called_once_with(self.block, 'grade', {
-                'value': weight,
-                'max_value': weight,
+                'value': 1,
+                'max_value': 1,
+                'only_if_higher': None,
             })
             self.assertTrue(res['correct'])
-            self.assertEqual(res['grade'], weight)
+            self.assertEqual(res['grade'], 1)
 
     @ddt.data(*[random.randint(1, 50) for _ in xrange(5)])  # pylint: disable=star-args
     def test_do_attempt_incorrect_publish_grade(self, weight):
@@ -366,11 +367,12 @@ class AssessmentModeFixture(BaseDragAndDropAjaxFixture):
 
             self.assertFalse(self.block.completed)
             patched_publish.assert_called_once_with(self.block, 'grade', {
-                'value': weight * correctness,
-                'max_value': weight,
+                'value': correctness,
+                'max_value': 1,
+                'only_if_higher': None,
             })
             self.assertFalse(res['correct'])
-            self.assertEqual(res['grade'], weight * correctness)
+            self.assertEqual(res['grade'], correctness)
 
     @ddt.data(*[random.randint(1, 50) for _ in xrange(5)])  # pylint: disable=star-args
     def test_do_attempt_post_correct_no_publish_grade(self, weight):
@@ -384,7 +386,7 @@ class AssessmentModeFixture(BaseDragAndDropAjaxFixture):
             self.call_handler(self.DO_ATTEMPT_HANDLER, data={})
 
             self.assertTrue(self.block.completed)
-            self.assertEqual(self.block.grade, weight)
+            self.assertEqual(self.block.grade, 1)
             self.assertFalse(patched_publish.called)
 
     def test_get_user_state_finished_after_final_attempt(self):
@@ -403,8 +405,7 @@ class AssessmentModeFixture(BaseDragAndDropAjaxFixture):
 
         self._set_final_attempt()
 
-        correctness = self._submit_partial_solution()
-        expected_grade = weight * correctness
+        expected_grade = self._submit_partial_solution()
 
         with mock.patch('workbench.runtime.WorkbenchRuntime.publish', mock.Mock()) as patched_publish:
             res = self.call_handler(self.DO_ATTEMPT_HANDLER, data={})
@@ -412,11 +413,12 @@ class AssessmentModeFixture(BaseDragAndDropAjaxFixture):
             self.assertTrue(self.block.completed)
             patched_publish.assert_called_once_with(self.block, 'grade', {
                 'value': expected_grade,
-                'max_value': weight,
+                'max_value': 1,
+                'only_if_higher': None,
             })
 
             expected_grade_feedback = self._make_feedback_message(
-                FeedbackMessages.FINAL_ATTEMPT_TPL.format(score=expected_grade),
+                FeedbackMessages.FINAL_ATTEMPT_TPL.format(score=expected_grade * self.block.weight),
                 FeedbackMessages.MessageClasses.PARTIAL_SOLUTION
             )
             self.assertIn(expected_grade_feedback, res[self.OVERALL_FEEDBACK_KEY])
@@ -430,7 +432,7 @@ class AssessmentModeFixture(BaseDragAndDropAjaxFixture):
         self.call_handler(self.DO_ATTEMPT_HANDLER, data={})
 
         self.assertTrue(self.block.completed)  # precondition check
-        self.assertEqual(self.block.grade, weight)  # precondition check
+        self.assertEqual(self.block.grade, 1)  # precondition check
 
         self._reset_problem()
 
@@ -447,7 +449,7 @@ class AssessmentModeFixture(BaseDragAndDropAjaxFixture):
             )
             self.assertFalse(patched_publish.called)
             self.assertIn(expected_grade_feedback, res[self.OVERALL_FEEDBACK_KEY])
-            self.assertEqual(self.block.grade, weight)
+            self.assertEqual(self.block.grade, 1)
 
     def test_do_attempt_misplaced_ids(self):
         misplaced_ids = self._submit_incorrect_solution()
@@ -641,7 +643,7 @@ class TestDragAndDropAssessmentData(AssessmentModeFixture, unittest.TestCase):
                 None
             ),
             self._make_feedback_message(
-                FeedbackMessages.GRADE_FEEDBACK_TPL.format(score=self.block.grade),
+                FeedbackMessages.GRADE_FEEDBACK_TPL.format(score=self.block.weighted_grade()),
                 FeedbackMessages.MessageClasses.PARTIAL_SOLUTION
             ),
         ]
@@ -670,7 +672,7 @@ class TestDragAndDropAssessmentData(AssessmentModeFixture, unittest.TestCase):
             self._make_feedback_message(FeedbackMessages.not_placed(3), FeedbackMessages.MessageClasses.NOT_PLACED),
             self._make_feedback_message(self.INITIAL_FEEDBACK, None),
             self._make_feedback_message(
-                FeedbackMessages.GRADE_FEEDBACK_TPL.format(score=self.block.grade),
+                FeedbackMessages.GRADE_FEEDBACK_TPL.format(score=self.block.weighted_grade()),
                 FeedbackMessages.MessageClasses.PARTIAL_SOLUTION
             )
         ]
@@ -700,7 +702,7 @@ class TestDragAndDropAssessmentData(AssessmentModeFixture, unittest.TestCase):
                 None
             ),
             self._make_feedback_message(
-                FeedbackMessages.GRADE_FEEDBACK_TPL.format(score=self.block.grade),
+                FeedbackMessages.GRADE_FEEDBACK_TPL.format(score=self.block.weighted_grade()),
                 FeedbackMessages.MessageClasses.PARTIAL_SOLUTION
             ),
         ]
@@ -718,7 +720,7 @@ class TestDragAndDropAssessmentData(AssessmentModeFixture, unittest.TestCase):
             ),
             self._make_feedback_message(self.FINAL_FEEDBACK, FeedbackMessages.MessageClasses.CORRECT_SOLUTION),
             self._make_feedback_message(
-                FeedbackMessages.GRADE_FEEDBACK_TPL.format(score=self.block.grade),
+                FeedbackMessages.GRADE_FEEDBACK_TPL.format(score=self.block.weighted_grade()),
                 FeedbackMessages.MessageClasses.CORRECT_SOLUTION
             ),
         ]
@@ -757,7 +759,7 @@ class TestDragAndDropAssessmentData(AssessmentModeFixture, unittest.TestCase):
             self._make_feedback_message(FeedbackMessages.not_placed(2), FeedbackMessages.MessageClasses.NOT_PLACED),
             self._make_feedback_message(self.INITIAL_FEEDBACK, None),
             self._make_feedback_message(
-                FeedbackMessages.GRADE_FEEDBACK_TPL.format(score=self.block.grade),
+                FeedbackMessages.GRADE_FEEDBACK_TPL.format(score=self.block.weighted_grade()),
                 FeedbackMessages.MessageClasses.PARTIAL_SOLUTION
             ),
         ]
@@ -766,7 +768,7 @@ class TestDragAndDropAssessmentData(AssessmentModeFixture, unittest.TestCase):
 
     def test_do_attempt_keeps_highest_score(self):
         self.assertFalse(self.block.completed)  # precondition check
-        expected_score = 4.0 / 5.0 * self.block.weight
+        expected_score = 4.0 / 5.0
 
         self._submit_solution({0: self.ZONE_1, 1: self.ZONE_2})  # partial solution, 0.8 score
         self._do_attempt()
@@ -781,7 +783,7 @@ class TestDragAndDropAssessmentData(AssessmentModeFixture, unittest.TestCase):
         self.assertEqual(self.block.grade, expected_score)
 
         expected_feedback = self._make_feedback_message(
-            FeedbackMessages.FINAL_ATTEMPT_TPL.format(score=expected_score),
+            FeedbackMessages.FINAL_ATTEMPT_TPL.format(score=expected_score * self.block.weight),
             FeedbackMessages.MessageClasses.PARTIAL_SOLUTION
         )
 
@@ -789,7 +791,7 @@ class TestDragAndDropAssessmentData(AssessmentModeFixture, unittest.TestCase):
 
     def test_do_attempt_check_score_with_decoy(self):
         self.assertFalse(self.block.completed)  # precondition check
-        expected_score = 4.0 / 5.0 * self.block.weight
+        expected_score = 4.0 / 5.0
         self._submit_solution({
             0: self.ZONE_1,
             1: self.ZONE_2,
@@ -817,7 +819,7 @@ class TestDragAndDropAssessmentData(AssessmentModeFixture, unittest.TestCase):
         self.assertEqual(res['grade'], 0)
         self.assertEqual(self.block.grade, 0)
         self.assertEqual(1, len(published_grades))
-        self.assertEqual({'value': 0, 'max_value': self.block.weight}, published_grades[-1])
+        self.assertEqual({'value': 0, 'max_value': 1, 'only_if_higher': None}, published_grades[-1])
 
         user_state = self.call_handler('get_user_state', method="GET")
         self.assertEqual(user_state['grade'], 0)

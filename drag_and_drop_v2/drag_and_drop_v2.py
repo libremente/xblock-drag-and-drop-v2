@@ -14,6 +14,7 @@ from xblock.core import XBlock
 from xblock.exceptions import JsonHandlerError
 from xblock.fields import Scope, String, Dict, Float, Boolean, Integer
 from xblock.fragment import Fragment
+from xblock.scorable import ScorableXBlockMixin, Score
 from xblockutils.resources import ResourceLoader
 from xblockutils.settings import XBlockWithSettingsMixin, ThemableXBlockMixin
 
@@ -31,7 +32,12 @@ logger = logging.getLogger(__name__)
 
 @XBlock.wants('settings')
 @XBlock.needs('i18n')
-class DragAndDropBlock(XBlock, XBlockWithSettingsMixin, ThemableXBlockMixin):
+class DragAndDropBlock(
+    XBlock,
+    XBlockWithSettingsMixin,
+    ThemableXBlockMixin,
+    ScorableXBlockMixin
+):
     """
     XBlock that implements a friendly Drag-and-Drop problem
     """
@@ -164,13 +170,12 @@ class DragAndDropBlock(XBlock, XBlockWithSettingsMixin, ThemableXBlockMixin):
     )
 
     grade = Float(
-        help=_("Keeps maximum score achieved by student"),
+        help=_("Keeps maximum score achieved by student as a float between 0 and 1."),
         scope=Scope.user_state,
         default=0
     )
 
     block_settings_key = 'drag-and-drop-v2'
-    has_score = True
 
     def max_score(self):  # pylint: disable=no-self-use
         """
@@ -178,6 +183,42 @@ class DragAndDropBlock(XBlock, XBlockWithSettingsMixin, ThemableXBlockMixin):
         Required by the grading system in the LMS.
         """
         return 1
+
+    def get_score(self):
+        """
+        Return the problem's current score as raw values.
+        """
+        return Score(self.grade, self.max_score())
+
+    def set_score(self, score):
+        """
+        Sets the score on this block.
+        Takes a Score namedtuple containing a raw
+        score and possible max (for this block, we expect that this will
+        always be 1).
+        """
+        assert score.raw_possible == self.max_score()
+        self.grade = score.raw_earned
+
+    def calculate_score(self):
+        """
+        Returns a newly-calculated raw score on the problem for the learner
+        based on the learner's current state.
+        """
+        return Score(self._learner_raw_score(), self.max_score())
+
+    def has_submitted_answer(self):
+        """
+        Returns True if the user has made a submission.
+        """
+        return self._get_grade_if_set() is not None
+
+    def weighted_grade(self):
+        """
+        Returns the block's current saved grade multiplied by the block's
+        weight- the number of points earned by the learner.
+        """
+        return self.grade * self.weight
 
     def _learner_raw_score(self):
         """
@@ -448,7 +489,7 @@ class DragAndDropBlock(XBlock, XBlockWithSettingsMixin, ThemableXBlockMixin):
         except KeyError:
             return {'result': 'error', 'message': 'Missing event_type in JSON data'}
 
-        self.runtime.publish(self, event_type, data)
+        self.runtime.publish(event_type, data)
         return {'result': 'success'}
 
     @XBlock.json_handler
@@ -598,7 +639,7 @@ class DragAndDropBlock(XBlock, XBlockWithSettingsMixin, ThemableXBlockMixin):
                 grade_feedback_template = FeedbackMessages.FINAL_ATTEMPT_TPL
 
             feedback_msgs.append(
-                FeedbackMessage(grade_feedback_template.format(score=self.grade), grade_feedback_class)
+                FeedbackMessage(grade_feedback_template.format(score=self.weighted_grade()), grade_feedback_class)
             )
 
         return feedback_msgs, misplaced_ids
@@ -680,7 +721,7 @@ class DragAndDropBlock(XBlock, XBlockWithSettingsMixin, ThemableXBlockMixin):
         """
         # pylint: disable=fixme
         # TODO: (arguable) split this method into "clean" functions (with no side effects and implicit state)
-        # This method implicitly depends on self.item_state (via _is_answer_correct and _calculate_grade)
+        # This method implicitly depends on self.item_state (via _is_answer_correct and _learner_raw_score)
         # and also updates self.grade if some conditions are met. As a result this method implies some order of
         # invocation:
         # * it should be called after learner-caused updates to self.item_state is applied
@@ -692,26 +733,12 @@ class DragAndDropBlock(XBlock, XBlockWithSettingsMixin, ThemableXBlockMixin):
 
         # There's no going back from "completed" status to "incomplete"
         self.completed = self.completed or self._is_answer_correct() or not self.attempts_remain
-        grade = self._calculate_grade()
+        grade = self._learner_raw_score()
         # ... and from higher grade to lower
         current_grade = self._get_grade_if_set()
         if current_grade is None or grade > current_grade:
             self.grade = grade
-            self._publish_grade()
-
-    def _publish_grade(self):
-        """
-        Publishes grade
-        """
-        try:
-            self.runtime.publish(self, 'grade', {
-                'value': self.grade,
-                'max_value': self.weight,
-            })
-        except NotImplementedError:
-            # Note, this publish method is unimplemented in Studio runtimes,
-            # so we have to figure that we're running in Studio for now
-            pass
+            self._publish_grade(Score(self.grade, 1))
 
     def _publish_item_dropped_event(self, attempt, is_correct):
         """
@@ -899,12 +926,6 @@ class DragAndDropBlock(XBlock, XBlockWithSettingsMixin, ThemableXBlockMixin):
         decoy_in_bank = set(item_id for item_id in decoy if item_id not in item_state)
 
         return ItemStats(required, placed, correctly_placed, decoy, decoy_in_bank)
-
-    def _calculate_grade(self):
-        """
-        Calculates the student's grade for this block based on current item state.
-        """
-        return self._learner_raw_score() * self.weight
 
     def _get_grade_if_set(self):
         """
