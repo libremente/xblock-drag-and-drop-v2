@@ -489,7 +489,7 @@ class DragAndDropBlock(
         except KeyError:
             return {'result': 'error', 'message': 'Missing event_type in JSON data'}
 
-        self.runtime.publish(event_type, data)
+        self.runtime.publish(self, event_type, data)
         return {'result': 'success'}
 
     @XBlock.json_handler

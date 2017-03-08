@@ -77,10 +77,7 @@ class EventsFiredTest(DefaultDataTestMixin, ParameterizedTestsMixin, BaseEventsT
     @unpack
     def test_event(self, index, event):
         self.parameterized_item_positive_feedback_on_good_move_standard(self.items_map)
-        if len(self.publish.call_args_list[index][0]) == 3:
-            _, name, published_data = self.publish.call_args_list[index][0]
-        else:
-            name, published_data = self.publish.call_args_list[index][0]
+        _, name, published_data = self.publish.call_args_list[index][0]
         self.assertEqual(name, event['name'])
         self.assertEqual(published_data, event['data'])
 
@@ -146,10 +143,7 @@ class AssessmentEventsFiredTest(
         self.click_submit()
         self.wait_for_ajax()
         for index, event in enumerate(self.scenarios):
-            if len(self.publish.call_args_list[index][0]) == 3:
-                _, name, published_data = self.publish.call_args_list[index][0]
-            else:
-                name, published_data = self.publish.call_args_list[index][0]
+            _, name, published_data = self.publish.call_args_list[index][0]
             self.assertEqual(name, event['name'])
             self.assertEqual(published_data, event['data'])
 
